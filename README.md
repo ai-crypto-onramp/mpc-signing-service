@@ -1,5 +1,7 @@
 # MPC Signing Service
 
+![CI](https://github.com/ai-crypto-onramp/mpc-signing-service/actions/workflows/ci.yml/badge.svg)
+
 Threshold-signature (t-of-n) signing across distributed nodes — no single key, the most security-critical component of the crypto on-ramp.
 
 ## Overview / Responsibilities
