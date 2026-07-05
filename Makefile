@@ -4,7 +4,7 @@ build:
 	cargo build --release
 
 test:
-	cargo test
+	cargo llvm-cov --codecov --output-path codecov.json
 
 run:
 	cargo run --release
@@ -17,3 +17,4 @@ docker-run:
 
 clean:
 	cargo clean
+	rm -f codecov.json
