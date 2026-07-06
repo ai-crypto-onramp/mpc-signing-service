@@ -220,6 +220,53 @@ from the platform secret manager, not the environment, in production.
 | `LOG_LEVEL` | no | `info` | `error` \| `warn` \| `info` \| `debug` |
 | `RUST_LOG` | no | `info` | tracing-subscriber filter for crate-level log control |
 
+## Workspace Structure
+
+Stage 1 establishes the workspace as a single crate with library + binary
+targets:
+
+```
+mpc-signing-service/
+├── Cargo.toml          # workspace + package definition, feature flags, deps
+├── Cargo.lock          # checked in (binary crate)
+├── deny.toml           # cargo-deny: advisories, bans, licenses, sources
+├── Makefile            # build / test / fmt / clippy / deny / audit / run-local
+├── scripts/
+│   └── run-mpc-node.sh # local 3-node runner
+└── src/
+    ├── lib.rs          # public library crate (re-exports modules below)
+    ├── main.rs         # binary entrypoint
+    ├── proto/           # gRPC service + messages (Stage 2)
+    ├── policy/          # policy_decision_token verification (Stage 3)
+    ├── wallet/         # Wallet Management integration (Stage 4)
+    ├── provider/       # custody-provider trait + adapters (Stage 5/6)
+    ├── engine/         # in-house CGGMP/CMP20 MPC engine (Stage 5/7, `in-house` feature)
+    ├── audit/          # signing audit records (Stage 7/9)
+    ├── node/           # inter-node coordination, mTLS, quorum (Stage 8/9)
+    └── config/         # 12-factor env config
+```
+
+### Feature flags
+
+The backend is selected at build time via cargo feature flags (mirroring
+`CUSTODY_PROVIDER` at runtime). The `in-house` feature is on by default.
+
+| Feature       | Backend                                          |
+|---------------|--------------------------------------------------|
+| `in-house`    | In-house CGGMP/CMP20 threshold signing (default) |
+| `fireblocks`  | Fireblocks custody API adapter (v1)              |
+| `dfns`        | Dfns custody API adapter (v1)                    |
+| `turnkey`     | Turnkey custody API adapter (v1)                 |
+
+Build matrix (mirrors the CI `build-matrix` job):
+
+```sh
+cargo build --release --no-default-features --features in-house
+cargo build --release --no-default-features --features fireblocks
+cargo build --release --no-default-features --features dfns
+cargo build --release --no-default-features --features turnkey
+```
+
 ## Local Development
 
 > **Security caveats:** Local development never uses real HSMs or production key
@@ -229,45 +276,47 @@ from the platform secret manager, not the environment, in production.
 ### Build
 
 ```sh
-# Build the service and all crates
+# Build with the default in-house MPC backend
 cargo build --release
 
-# Build with the in-house MPC backend (default)
+# Build with an explicit feature combination (CI mirrors these)
 cargo build --release --no-default-features --features in-house
-
-# Build with a v1 custody provider backend
 cargo build --release --no-default-features --features fireblocks
 cargo build --release --no-default-features --features dfns
 cargo build --release --no-default-features --features turnkey
+
+# Build all four combinations
+make build-all
 ```
 
 ### Test
 
 ```sh
-# Unit + integration tests (software backend, no HSM required)
-cargo test
+# Unit + integration tests with coverage
+make test
 
-# Run only the MPC round tests
-cargo test --test mpc_rounds
+# Plain test run
+cargo test --all-features
+```
 
-# Run with the custody-provider adapter mocked
-cargo test --features fireblocks -- --ignored
+### Lint & supply-chain checks
+
+```sh
+make fmt-check        # cargo fmt --check
+make clippy           # cargo clippy -- -D warnings
+make deny             # cargo deny check
+make audit            # cargo audit
 ```
 
 ### Run a local 3-node cluster (t=2, n=3)
 
+Stage 1 ships a stub runner; Stage 8 wires real mTLS clustering with
+attestation.
+
 ```sh
-# Terminal 1
-NODE_ID=node1 PORT=50051 PEER_NODES=localhost:50052,localhost:50053 \
-  THRESHOLD_T=2 TOTAL_N=3 CUSTODY_PROVIDER=in_house ./target/run-mpc-node.sh
-
-# Terminal 2
-NODE_ID=node2 PORT=50052 PEER_NODES=localhost:50051,localhost:50053 \
-  THRESHOLD_T=2 TOTAL_N=3 CUSTODY_PROVIDER=in_house ./target/run-mpc-node.sh
-
-# Terminal 3
-NODE_ID=node3 PORT=50053 PEER_NODES=localhost:50051,localhost:50052 \
-  THRESHOLD_T=2 TOTAL_N=3 CUSTODY_PROVIDER=in_house ./target/run-mpc-node.sh
+# Single binary, three processes — set FEATURES to match the build feature
+make run-local                # defaults to in-house
+FEATURES=fireblocks make run-local
 ```
 
 ### v1 vs build-later strategy

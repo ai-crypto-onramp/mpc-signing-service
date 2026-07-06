@@ -2,16 +2,72 @@
 name = "mpc-signing-service"
 version = "0.1.0"
 edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Threshold (t-of-n) MPC signing service for the crypto on-ramp."
+
+[lib]
+name = "mpc_signing_service"
+path = "src/lib.rs"
 
 [[bin]]
 name = "mpc-signing-service"
 path = "src/main.rs"
 
+[features]
+default = ["in-house"]
+# In-house threshold-signing engine (CGGMP / CMP20 family).
+in-house = []
+# Custody-provider adapters — mutually exclusive with the in-house engine at runtime,
+# selected via the `CUSTODY_PROVIDER` env var. Kept as cargo features so the
+# provider SDK dependencies are only pulled in when that backend is built.
+fireblocks = []
+dfns = []
+turnkey = []
+
 [dependencies]
-axum = "0.7"
+# gRPC stack (replaces the placeholder axum/HTTP scaffold).
+tonic = "0.12"
+prost = "0.13"
+tonic-build = "0.12" # kept in [dependencies] so `make proto` works without a separate install
+
+# Async runtime.
 tokio = { version = "1", features = ["full"] }
+
+# Observability.
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Serde / JSON.
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+# Error handling.
+thiserror = "1"
+anyhow = "1"
+
+# 12-factor config.
+config = "0.14"
+envy = "0.4"
+
+# Crypto primitives.
+rand = "0.8"
+k256 = { version = "0.13", features = ["ecdsa", "serde"] }
+ecdsa = { version = "0.16", features = ["signing", "verifying", "der"] }
+curve25519-dalek = { version = "4", features = ["rand_core"] }
+sha2 = "0.10"
+hmac = "0.12"
+hex = "0.4"
+
 [dev-dependencies]
-tower = "0.4"
-http-body-util = "0.1"
+proptest = "1"
+mockall = "0.13"
+# gRPC testing is done via in-process `tonic` channels (the wiremock-equivalent
+# for gRPC) plus `tower` service-test helpers.
+tower = { version = "0.4", features = ["util"] }
+
+[workspace]
+members = ["."]
+
+[profile.release]
+lto = true
+codegen-units = 1

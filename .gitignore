@@ -1,4 +1,4 @@
 target/
-Cargo.lock
 *.log
-.envcodecov.json
+.env
+codecov.json
