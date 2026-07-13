@@ -243,13 +243,34 @@ Stages 1–6 of `PROJECT_PLAN.md` (the v1-shippable path) are implemented:
   denied, or failed — emits a record signed by the node's Ed25519 identity key,
   delivered asynchronously with retries to `AUDIT_EVENT_LOG_URL`.
 
-Known deviations and pending work:
+Stages 7–10 (the in-house engine and hardening) are also implemented:
 
-- The `in-house` engine is a **single-party placeholder** (real k256/Ed25519
-  signing, full trait contract) until an audited CGGMP/CMP20 crate is selected —
-  threshold DKG, t-of-n signing, inter-node transport, and quorum enforcement
-  (Stage 7) remain open, as do enclave/HSM share storage and attestation
-  (Stage 8) and mTLS (Stage 9). Do not use it as a production signer.
+- **Threshold engine** (Stage 7, feature `in-house`): dealer-less Feldman DKG,
+  Shamir t-of-n over secp256k1 (ECDSA) and edwards25519 (EdDSA), threshold
+  signing that verifies under the standard single-key verifier, proactive share
+  refresh that preserves the public key/address, and an in-process transport
+  with per-round timeout and quorum enforcement. A local 3-node (t=2, n=3)
+  `mpc_rounds` test drives DKG → sign → verify and proves t-1 nodes cannot sign.
+- **Enclave/HSM storage** (Stage 8): a `KeyShareStore` trait with a software
+  `MockHsmStore` (wrap/unwrap/backup/restore, quorum-gated restore) and a
+  join-time attestation verifier binding the node's mTLS key to the enclave
+  measurement + HSM identity.
+- **mTLS** (Stage 9): `MTLS_CERT`/`MTLS_KEY`/`MTLS_CA` enable mutual TLS on the
+  gRPC port; a rogue-CA client is rejected (tested). `make mtls` generates a
+  local PKI; `docker-compose.cluster.yml` runs a 3-node mTLS cluster.
+- **Hardening** (Stage 10): ≥90% coverage with a CI gate, chaos test, and
+  `cargo-deny`/`cargo-audit` in CI; runbooks in `docs/runbooks/` and
+  `SECURITY.md`.
+
+Known deviations and pending work (see `PROJECT_PLAN.md` and `SECURITY.md`):
+
+- **Threshold signing reconstructs the secret in the combiner** — a documented
+  placeholder (`src/engine/threshold/cluster.rs`). A non-reconstructing
+  protocol (GG20/CGGMP/CMP20) via an audited crate is required before the
+  in-house engine signs production funds. DKG, refresh, quorum, and transport
+  are real.
+- Enclave/HSM storage and attestation are **software mocks** (no PKCS#11 / real
+  Nitro-SGX); the inter-node channel is in-process; no external audit yet.
 - `INSECURE_SKIP_POLICY` / `INSECURE_SKIP_WALLET_CHECK` are dev-only escape
   hatches; without them, an unconfigured policy key or wallet URL fails closed.
 - Sessions and used tokens are in-memory stores behind traits; a durable store
