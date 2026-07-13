@@ -125,9 +125,19 @@ async fn main() -> anyhow::Result<()> {
             .await
     });
 
-    // gRPC: the signing API.
+    // gRPC: the signing API, mTLS when MTLS_* are configured.
+    let tls = match mpc_signing_service::mtls::MtlsMaterial::from_env()? {
+        Some(m) => {
+            tracing::info!("mTLS enabled for the gRPC port");
+            Some(m.server_config())
+        }
+        None => {
+            tracing::warn!("MTLS_* not set; gRPC served in plaintext (dev only)");
+            None
+        }
+    };
     let grpc_addr = std::net::SocketAddr::from(([0, 0, 0, 0], cfg.grpc_port));
-    serve(service, grpc_addr, shutdown_signal()).await?;
+    serve(service, grpc_addr, tls, shutdown_signal()).await?;
 
     http.abort();
     Ok(())

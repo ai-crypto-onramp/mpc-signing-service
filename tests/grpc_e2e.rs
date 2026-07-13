@@ -67,9 +67,14 @@ async fn start(engine: Arc<dyn SigningEngine>) -> Harness {
     let addr = listener.local_addr().unwrap();
     drop(listener); // free the port for tonic to rebind
     let (tx, rx) = tokio::sync::oneshot::channel::<()>();
-    tokio::spawn(mpc_signing_service::grpc::serve(service, addr, async {
-        let _ = rx.await;
-    }));
+    tokio::spawn(mpc_signing_service::grpc::serve(
+        service,
+        addr,
+        None,
+        async {
+            let _ = rx.await;
+        },
+    ));
 
     // wait for the server to accept connections
     let endpoint = format!("http://{addr}");

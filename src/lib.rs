@@ -15,8 +15,10 @@
 pub mod audit;
 pub mod config;
 pub mod domain;
+pub mod enclave;
 pub mod engine;
 pub mod grpc;
+pub mod mtls;
 pub mod policy;
 pub mod store;
 pub mod wallet;

@@ -271,14 +271,22 @@ impl MpcSigningService for MpcService {
     }
 }
 
-/// Serve the gRPC service on `addr` until `shutdown` resolves.
+/// Serve the gRPC service on `addr` until `shutdown` resolves. When `tls` is
+/// `Some`, the server requires and verifies client certificates (mTLS).
 pub async fn serve(
     service: MpcService,
     addr: std::net::SocketAddr,
+    tls: Option<tonic::transport::ServerTlsConfig>,
     shutdown: impl std::future::Future<Output = ()> + Send + 'static,
 ) -> anyhow::Result<()> {
-    tracing::info!(%addr, "mpc-signing-service gRPC listening");
-    tonic::transport::Server::builder()
+    let mut builder = tonic::transport::Server::builder();
+    if let Some(tls) = tls {
+        tracing::info!(%addr, "mpc-signing-service gRPC listening (mTLS)");
+        builder = builder.tls_config(tls)?;
+    } else {
+        tracing::info!(%addr, "mpc-signing-service gRPC listening (plaintext)");
+    }
+    builder
         .add_service(MpcSigningServiceServer::new(service))
         .serve_with_shutdown(addr, shutdown)
         .await?;
