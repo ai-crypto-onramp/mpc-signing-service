@@ -2,6 +2,8 @@
 name = "mpc-signing-service"
 version = "0.1.0"
 edition = "2021"
+license = "Apache-2.0"
+publish = false
 
 [lib]
 name = "mpc_signing_service"
@@ -22,7 +24,7 @@ turnkey = []
 [dependencies]
 axum = "0.7"
 tokio = { version = "1", features = ["full"] }
-tonic = "0.12"
+tonic = { version = "0.12", features = ["tls"] }
 prost = "0.13"
 tower = "0.4"
 http = "1"
@@ -36,7 +38,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 rand = "0.8"
 k256 = { version = "0.13", features = ["ecdsa"] }
 ecdsa = "0.16"
+ff = "0.13"
 ed25519-dalek = { version = "2", features = ["rand_core"] }
+curve25519-dalek = { version = "4", features = ["rand_core"] }
 sha2 = "0.10"
 hmac = "0.12"
 hex = "0.4"
@@ -50,6 +54,7 @@ tower = { version = "0.4", features = ["util"] }
 http-body-util = "0.1"
 proptest = "1"
 wiremock = "0.6"
+rcgen = "0.13"
 
 [build-dependencies]
 tonic-build = "0.12"

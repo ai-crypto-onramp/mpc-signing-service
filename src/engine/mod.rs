@@ -14,6 +14,8 @@ pub mod dfns;
 pub mod fireblocks;
 #[cfg(feature = "in-house")]
 pub mod local;
+#[cfg(feature = "in-house")]
+pub mod threshold;
 #[cfg(feature = "turnkey")]
 pub mod turnkey;
 
@@ -118,7 +120,10 @@ pub fn build_engine(cfg: &Config) -> anyhow::Result<Arc<dyn SigningEngine>> {
         CustodyProvider::InHouse => {
             #[cfg(feature = "in-house")]
             {
-                Ok(Arc::new(local::LocalEngine::new()))
+                Ok(Arc::new(threshold::ThresholdEngine::new(
+                    cfg.threshold_t,
+                    cfg.total_n,
+                )?))
             }
             #[cfg(not(feature = "in-house"))]
             {

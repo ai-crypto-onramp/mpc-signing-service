@@ -57,6 +57,10 @@ pub struct Config {
     pub insecure_skip_policy: bool,
     /// DEV ONLY: skip the Wallet Management key-binding check.
     pub insecure_skip_wallet_check: bool,
+    /// Threshold `t` for the in-house engine (min signers).
+    pub threshold_t: usize,
+    /// Total nodes `n` for the in-house engine.
+    pub total_n: usize,
 }
 
 impl Config {
@@ -78,6 +82,8 @@ impl Config {
             node_signing_key: env_opt("NODE_SIGNING_KEY"),
             insecure_skip_policy: env_parse("INSECURE_SKIP_POLICY", false),
             insecure_skip_wallet_check: env_parse("INSECURE_SKIP_WALLET_CHECK", false),
+            threshold_t: env_parse("THRESHOLD_T", 2),
+            total_n: env_parse("TOTAL_N", 3),
         }
     }
 }
@@ -100,6 +106,8 @@ impl Default for Config {
             node_signing_key: None,
             insecure_skip_policy: false,
             insecure_skip_wallet_check: false,
+            threshold_t: 2,
+            total_n: 3,
         }
     }
 }
