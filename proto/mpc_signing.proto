@@ -1,0 +1,103 @@
+syntax = "proto3";
+
+package mpc.v1;
+
+// MpcSigningService is the threshold-signing control and data plane.
+//
+// v1 delegates signing to a custody provider (Fireblocks / Dfns / Turnkey)
+// behind the SigningEngine boundary; the in-house CGGMP engine implements the
+// same surface behind the `in-house` feature flag.
+service MpcSigningService {
+  // SignTx signs a transaction payload with the key identified by key_id.
+  // Requires a valid, unused, unexpired policy_decision_token bound to
+  // (tx_payload, key_id, chain). Refuses to sign otherwise.
+  rpc SignTx(SignTxRequest) returns (SignTxResponse);
+
+  // Dkg runs a distributed key generation ceremony producing a new key.
+  rpc Dkg(DkgRequest) returns (DkgResponse);
+
+  // RotateKey refreshes key shares without changing the public key/address.
+  rpc RotateKey(RotateKeyRequest) returns (RotateKeyResponse);
+
+  // GetKeyMetadata returns public metadata for a key.
+  rpc GetKeyMetadata(GetKeyMetadataRequest) returns (GetKeyMetadataResponse);
+
+  // RestoreShare restores a node's key share from sealed backup.
+  rpc RestoreShare(RestoreShareRequest) returns (RestoreShareResponse);
+}
+
+enum Chain {
+  CHAIN_UNSPECIFIED = 0;
+  CHAIN_EVM = 1;
+  CHAIN_SOLANA = 2;
+  CHAIN_APTOS = 3;
+  CHAIN_SUI = 4;
+  CHAIN_BITCOIN = 5;
+}
+
+message SignTxRequest {
+  string key_id = 1;
+  Chain chain = 2;
+  // Raw transaction payload to sign (chain-specific encoding).
+  bytes tx_payload = 3;
+  // Signed policy decision token issued by the Policy / Risk Engine.
+  string policy_decision_token = 4;
+  // Wallet Management wallet id owning the key (used for key resolution).
+  string wallet_id = 5;
+}
+
+message SignTxResponse {
+  string signing_session_id = 1;
+  bytes signature = 2;
+  // Public key the signature verifies against.
+  bytes public_key = 3;
+  // Address resolved via Wallet Management.
+  string address = 4;
+}
+
+message DkgRequest {
+  Chain chain = 1;
+  uint32 threshold = 2;
+  uint32 parties = 3;
+}
+
+message DkgResponse {
+  string key_id = 1;
+  bytes public_key = 2;
+}
+
+message RotateKeyRequest {
+  string key_id = 1;
+}
+
+message RotateKeyResponse {
+  string key_id = 1;
+  bytes public_key = 2;
+  // Rotation epoch after the refresh.
+  uint64 epoch = 3;
+}
+
+message GetKeyMetadataRequest {
+  string key_id = 1;
+}
+
+message GetKeyMetadataResponse {
+  string key_id = 1;
+  Chain chain = 2;
+  bytes public_key = 3;
+  string status = 4;
+  uint64 epoch = 5;
+}
+
+message RestoreShareRequest {
+  string key_id = 1;
+  string node_id = 2;
+  // Quorum proof authorizing the restore.
+  bytes quorum_proof = 3;
+}
+
+message RestoreShareResponse {
+  string key_id = 1;
+  string node_id = 2;
+  bool restored = 3;
+}

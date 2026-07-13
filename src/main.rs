@@ -1,22 +1,157 @@
-use axum::{routing::get, Json, Router};
+//! mpc-signing-service binary: wires config → policy verifier → wallet
+//! client → signing engine → audit emitter, then serves gRPC (signing API)
+//! and HTTP (/healthz + custody webhook) until SIGTERM/ctrl-c.
+
+use std::sync::Arc;
+
+use axum::{routing::get, routing::post, Json, Router};
 use serde_json::{json, Value};
+
+use mpc_signing_service::audit::{AuditEmitter, AuditSigner, HttpAuditSink};
+use mpc_signing_service::config::Config;
+use mpc_signing_service::engine::build_engine;
+use mpc_signing_service::grpc::{serve, MpcService};
+use mpc_signing_service::policy::Ed25519TokenVerifier;
+use mpc_signing_service::store::{InMemSessionStore, InMemUsedTokenStore};
+use mpc_signing_service::wallet::GrpcWalletClient;
 
 async fn healthz() -> Json<Value> {
     Json(json!({"status": "ok"}))
 }
 
-fn app() -> Router {
-    Router::new().route("/healthz", get(healthz))
+/// Inbound custody webhook: HMAC-verified against CUSTODY_WEBHOOK_SECRET.
+async fn custody_webhook(
+    axum::extract::State(secret): axum::extract::State<Option<String>>,
+    headers: axum::http::HeaderMap,
+    body: axum::body::Bytes,
+) -> (axum::http::StatusCode, Json<Value>) {
+    let Some(secret) = secret else {
+        return (
+            axum::http::StatusCode::NOT_IMPLEMENTED,
+            Json(json!({"error": "webhook secret not configured"})),
+        );
+    };
+    let sig = headers
+        .get("x-custody-signature")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default();
+    if !mpc_signing_service::engine::custody::verify_webhook(&secret, &body, sig) {
+        return (
+            axum::http::StatusCode::UNAUTHORIZED,
+            Json(json!({"error": "invalid webhook signature"})),
+        );
+    }
+    tracing::info!(bytes = body.len(), "custody webhook accepted");
+    (axum::http::StatusCode::OK, Json(json!({"status": "ok"})))
 }
 
-async fn serve(listener: tokio::net::TcpListener) {
-    axum::serve(listener, app()).await.unwrap();
+fn http_app(webhook_secret: Option<String>) -> Router {
+    Router::new()
+        .route("/healthz", get(healthz))
+        .route("/v1/custody/webhook", post(custody_webhook))
+        .with_state(webhook_secret)
 }
 
 #[tokio::main]
-async fn main() {
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
-    serve(listener).await;
+async fn main() -> anyhow::Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
+        )
+        .init();
+
+    let cfg = Config::from_env();
+    tracing::info!(provider = ?cfg.custody_provider, "starting mpc-signing-service");
+
+    // Policy verifier (fail closed when unset unless the dev flag is on).
+    let used_tokens = Arc::new(InMemUsedTokenStore::new());
+    let verifier = match &cfg.policy_engine_pubkey {
+        Some(pk) => Some(Arc::new(Ed25519TokenVerifier::new(
+            pk,
+            cfg.token_max_skew.as_secs(),
+            used_tokens,
+        )?)
+            as Arc<dyn mpc_signing_service::policy::PolicyTokenVerifier>),
+        None => {
+            tracing::warn!("POLICY_ENGINE_PUBKEY not set; SignTx will fail closed");
+            None
+        }
+    };
+
+    // Wallet Management client (fail closed when unset unless the dev flag is on).
+    let wallet = match &cfg.wallet_management_url {
+        Some(url) => Some(Arc::new(
+            GrpcWalletClient::connect(url)
+                .await
+                .map_err(|e| anyhow::anyhow!("wallet management client: {e}"))?,
+        )
+            as Arc<dyn mpc_signing_service::wallet::WalletManagementClient>),
+        None => {
+            tracing::warn!("WALLET_MANAGEMENT_URL not set; SignTx will fail closed");
+            None
+        }
+    };
+
+    let engine = build_engine(&cfg)?;
+    let audit_signer = Arc::new(AuditSigner::new(
+        &cfg.node_id,
+        cfg.node_signing_key.as_deref(),
+    )?);
+    let audit_sink = cfg
+        .audit_event_log_url
+        .as_deref()
+        .map(|u| Arc::new(HttpAuditSink::new(u)) as Arc<dyn mpc_signing_service::audit::AuditSink>);
+    let audit = AuditEmitter::start(audit_sink);
+
+    let service = MpcService {
+        verifier,
+        wallet,
+        engine,
+        sessions: Arc::new(InMemSessionStore::new()),
+        audit_signer,
+        audit,
+        skip_policy: cfg.insecure_skip_policy,
+        skip_wallet_check: cfg.insecure_skip_wallet_check,
+    };
+
+    // HTTP: healthz + custody webhook.
+    let http_addr = std::net::SocketAddr::from(([0, 0, 0, 0], cfg.http_port));
+    let http_listener = tokio::net::TcpListener::bind(http_addr).await?;
+    let webhook_secret = cfg.custody_webhook_secret.clone();
+    let http = tokio::spawn(async move {
+        tracing::info!(%http_addr, "http listening (healthz, custody webhook)");
+        axum::serve(http_listener, http_app(webhook_secret))
+            .with_graceful_shutdown(shutdown_signal())
+            .await
+    });
+
+    // gRPC: the signing API.
+    let grpc_addr = std::net::SocketAddr::from(([0, 0, 0, 0], cfg.grpc_port));
+    serve(service, grpc_addr, shutdown_signal()).await?;
+
+    http.abort();
+    Ok(())
+}
+
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        let _ = tokio::signal::ctrl_c().await;
+    };
+    #[cfg(unix)]
+    let terminate = async {
+        if let Ok(mut sig) =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        {
+            sig.recv().await;
+        }
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
+    tracing::info!("shutdown signal received");
 }
 
 #[cfg(test)]
@@ -25,19 +160,11 @@ mod tests {
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
     use http_body_util::BodyExt;
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tower::ServiceExt;
 
     #[tokio::test]
-    async fn healthz_returns_ok() {
-        let res = healthz().await;
-        let val: Value = res.0;
-        assert_eq!(val["status"], "ok");
-    }
-
-    #[tokio::test]
-    async fn router_serves_healthz() {
-        let res = app()
+    async fn healthz_ok() {
+        let resp = http_app(None)
             .oneshot(
                 Request::builder()
                     .uri("/healthz")
@@ -46,41 +173,59 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(res.status(), StatusCode::OK);
-        let body = res.into_body().collect().await.unwrap().to_bytes();
-        let val: Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(val, json!({"status": "ok"}));
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let v: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(v["status"], "ok");
     }
 
     #[tokio::test]
-    async fn router_returns_404_for_unknown_route() {
-        let res = app()
+    async fn webhook_unconfigured_returns_501() {
+        let resp = http_app(None)
             .oneshot(
                 Request::builder()
-                    .uri("/does-not-exist")
-                    .body(Body::empty())
+                    .method("POST")
+                    .uri("/v1/custody/webhook")
+                    .body(Body::from("{}"))
                     .unwrap(),
             )
             .await
             .unwrap();
-        assert_eq!(res.status(), StatusCode::NOT_FOUND);
+        assert_eq!(resp.status(), StatusCode::NOT_IMPLEMENTED);
     }
 
     #[tokio::test]
-    async fn serve_handles_real_http_connections() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(serve(listener));
+    async fn webhook_verifies_hmac() {
+        use mpc_signing_service::engine::custody::webhook_signature;
+        let app = http_app(Some("s3cret".into()));
 
-        let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
-        stream
-            .write_all(b"GET /healthz HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        let body = br#"{"event":"tx_signed"}"#;
+        let sig = webhook_signature("s3cret", body);
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/custody/webhook")
+                    .header("x-custody-signature", sig)
+                    .body(Body::from(&body[..]))
+                    .unwrap(),
+            )
             .await
             .unwrap();
-        let mut response = String::new();
-        stream.read_to_string(&mut response).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
 
-        assert!(response.starts_with("HTTP/1.1 200 OK"));
-        assert!(response.contains("\"status\":\"ok\""));
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/custody/webhook")
+                    .header("x-custody-signature", "deadbeef")
+                    .body(Body::from(&body[..]))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 }
