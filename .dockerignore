@@ -1,0 +1,5 @@
+target/
+codecov.json
+.git/
+*.log
+.env

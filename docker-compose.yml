@@ -1,0 +1,15 @@
+services:
+  # Local dev single-node service with the in-house (placeholder) engine.
+  # The INSECURE_* flags bypass policy/wallet gating so DKG + SignTx can be
+  # exercised standalone; never set them outside local dev. The full 3-node
+  # mTLS cluster with a mock custody provider lands with plan stages 7–9.
+  mpc-signing-service:
+    build: .
+    ports:
+      - "${MPC_PORT:-8080}:8080"
+      - "${MPC_GRPC_PORT:-9090}:9090"
+    environment:
+      CUSTODY_PROVIDER: in_house
+      INSECURE_SKIP_POLICY: "true"
+      INSECURE_SKIP_WALLET_CHECK: "true"
+      NODE_ID: node-0
