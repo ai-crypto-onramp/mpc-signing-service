@@ -1,5 +1,5 @@
-.PHONY: build build-matrix test test-all coverage lint fmt fmt-check run \
-	docker-build docker-run docker-up docker-down clean
+.PHONY: build build-matrix test test-all coverage coverage-check lint fmt fmt-check \
+	audit deny mtls run docker-build docker-run docker-up docker-down clean
 
 build:
 	cargo build --release
@@ -20,8 +20,22 @@ test-all:
 coverage:
 	cargo llvm-cov --all-features --codecov --output-path codecov.json
 
+# Fail if total line coverage is below the 90% gate (Stage 10).
+coverage-check:
+	cargo llvm-cov --all-features --summary-only --fail-under-lines 90
+
 lint:
 	cargo clippy --all-targets --all-features -- -D warnings
+
+audit:
+	cargo audit
+
+deny:
+	cargo deny check
+
+# Generate an ephemeral local mTLS PKI (CA + per-node certs) under ./certs.
+mtls:
+	./scripts/gen-mtls.sh ./certs
 
 fmt:
 	cargo fmt

@@ -1,0 +1,68 @@
+# Local 3-node MPC cluster (t=2, n=3) with mTLS and a mock custody provider.
+#
+# Prereqs: generate the PKI first —
+#   make mtls            # writes ./certs (ca.crt + node1/2/3 .crt/.key)
+#   docker compose -f docker-compose.cluster.yml up --build
+#
+# Each node runs an in-process t-of-n cluster (the local placeholder for a
+# cross-host threshold deployment) behind mTLS. INSECURE_SKIP_* are set so the
+# cluster is exercisable without a live Policy Engine / Wallet Management;
+# never set them outside local dev.
+services:
+  node1: &node
+    build: .
+    command: ["/server"]
+    environment:
+      NODE_ID: node1
+      CUSTODY_PROVIDER: in_house
+      THRESHOLD_T: "2"
+      TOTAL_N: "3"
+      INSECURE_SKIP_POLICY: "true"
+      INSECURE_SKIP_WALLET_CHECK: "true"
+      MTLS_CERT: /certs/node1.crt
+      MTLS_KEY: /certs/node1.key
+      MTLS_CA: /certs/ca.crt
+    volumes:
+      - ./certs:/certs:ro
+    ports:
+      - "8091:8080"
+      - "9091:9090"
+
+  node2:
+    <<: *node
+    environment:
+      NODE_ID: node2
+      CUSTODY_PROVIDER: in_house
+      THRESHOLD_T: "2"
+      TOTAL_N: "3"
+      INSECURE_SKIP_POLICY: "true"
+      INSECURE_SKIP_WALLET_CHECK: "true"
+      MTLS_CERT: /certs/node2.crt
+      MTLS_KEY: /certs/node2.key
+      MTLS_CA: /certs/ca.crt
+    ports:
+      - "8092:8080"
+      - "9092:9090"
+
+  node3:
+    <<: *node
+    environment:
+      NODE_ID: node3
+      CUSTODY_PROVIDER: in_house
+      THRESHOLD_T: "2"
+      TOTAL_N: "3"
+      INSECURE_SKIP_POLICY: "true"
+      INSECURE_SKIP_WALLET_CHECK: "true"
+      MTLS_CERT: /certs/node3.crt
+      MTLS_KEY: /certs/node3.key
+      MTLS_CA: /certs/ca.crt
+    ports:
+      - "8093:8080"
+      - "9093:9090"
+
+  # Mock custody provider for the v1 delegation path (wiremock-style stand-in).
+  mock-custody:
+    image: hashicorp/http-echo:latest
+    command: ["-text", "{\"status\":\"mock-custody\"}"]
+    ports:
+      - "8099:5678"
