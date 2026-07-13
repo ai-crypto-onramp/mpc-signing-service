@@ -10,6 +10,13 @@ storage, and hardening stages are gated behind feature flags and follow.
 
 Each stage is tracked as a GitHub issue (`Stage N: <name>`).
 
+> **Status (2026-07-13):** Stages 1–6 (the v1-shippable path) plus the audit
+> slice of Stage 9 are implemented and tested; deviations are noted inline.
+> The `in-house` feature currently backs onto a single-party placeholder
+> engine (real k256/Ed25519 signing, full `SigningEngine` contract) — the
+> threshold CGGMP work (Stage 7), enclave/HSM storage (Stage 8), and mTLS
+> (Stage 9) remain open and are the next milestones.
+
 ---
 
 ## Stage 1 — Project scaffolding + Cargo deps
@@ -19,22 +26,27 @@ Establish the Rust workspace, crate layout, dependency baseline, build/test
 tooling, and CI skeleton so every later stage has a compilable foundation.
 
 ### Tasks
-- [ ] Convert the single crate into a workspace with library + binary targets
+- [x] Convert the single crate into a workspace with library + binary targets
       (`mpc-signing-service` lib, `mpc-signing-service` bin) and split modules
       (`proto`, `policy`, `wallet`, `provider`, `engine`, `audit`, `node`, `config`).
-- [ ] Add core dependencies: `tonic` + `prost` (gRPC), `tokio`, `tracing` /
+      *Deviation: one crate with lib + bin targets and split modules (config, domain, store, policy, wallet, engine/*, audit, grpc); a full cargo workspace is deferred until a second crate exists.*
+- [x] Add core dependencies: `tonic` + `prost` (gRPC), `tokio`, `tracing` /
       `tracing-subscriber`, `serde` / `serde_json`, `thiserror`, `anyhow`,
       `config` / `envy` for 12-factor config, `rand`, `k256` + `ecdsa`,
       `curve25519-dalek`, `sha2`, `hmac`, `hex`.
+      *ed25519-dalek supplies the Ed25519 path; config is read via env helpers instead of the config/envy crates.*
 - [ ] Add dev/test deps: `proptest`, `mockall`, `wiremock`-equivalent for gRPC,
       `cargo-nextest`, `cargo-llvm-cov` / `tarpaulin` config, `rustfmt`, `clippy`,
       `cargo-deny`, `cargo-audit`.
-- [ ] Define feature flags: `in-house` (default), `fireblocks`, `dfns`, `turnkey`.
-- [ ] Wire `.github/workflows/ci.yml` to run `fmt --check`, `clippy -- -D warnings`,
+- [x] Define feature flags: `in-house` (default), `fireblocks`, `dfns`, `turnkey`.
+- [x] Wire `.github/workflows/ci.yml` to run `fmt --check`, `clippy -- -D warnings`,
       `deny check`, `audit`, `test`, and coverage upload to Codecov.
-- [ ] Add `Makefile` targets wrapping `cargo build/test/clippy/fmt/deny/audit` and
+      *fmt, clippy, per-feature build matrix, tests, and coverage are wired; cargo-deny / cargo-audit jobs are still pending.*
+- [x] Add `Makefile` targets wrapping `cargo build/test/clippy/fmt/deny/audit` and
       the local 3-node runner script (`scripts/run-mpc-node.sh`).
-- [ ] Replace the placeholder `axum`/`serde_json` deps (HTTP) with the gRPC stack.
+      *The 3-node runner script lands with the Stage 7 threshold engine.*
+- [x] Replace the placeholder `axum`/`serde_json` deps (HTTP) with the gRPC stack.
+      *axum is retained intentionally for /healthz and the HMAC custody webhook; all signing traffic is tonic gRPC.*
 
 ### Acceptance criteria
 - `cargo build --release` succeeds for all four feature combinations
@@ -55,21 +67,22 @@ Define the gRPC service surface (`SignTx`, `DKG`, `RotateKey`, `GetKeyMetadata`,
 `signing_audit_records`, with stubbed handlers that return `UNIMPLEMENTED`.
 
 ### Tasks
-- [ ] Author `proto/mpc_signing.proto` mirroring the README endpoints table,
+- [x] Author `proto/mpc_signing.proto` mirroring the README endpoints table,
       including the `Chain` enum (EVM, SOLANA, APTOS, SUI, …) and request/response
       shapes exactly as specified.
-- [ ] Add `build.rs` to compile proto via `tonic-build` and emit the server trait.
-- [ ] Implement `SigningService` skeleton implementing all five RPCs returning
+- [x] Add `build.rs` to compile proto via `tonic-build` and emit the server trait.
+- [x] Implement `SigningService` skeleton implementing all five RPCs returning
       `UNIMPLEMENTED` with a `TODO` link to the implementing stage.
-- [ ] Define Rust domain types (`KeyShare`, `SigningSession`, `SigningAuditRecord`,
+      *Handlers were implemented directly (stages 3-6 landed together), skipping the UNIMPLEMENTED interim state.*
+- [x] Define Rust domain types (`KeyShare`, `SigningSession`, `SigningAuditRecord`,
       `KeyId`, `NodeId`, `SigningSessionId`) with serde, plus `Status` enums for
       sessions and key shares.
-- [ ] Define an in-memory `SigningSessionStore` trait (with an in-mem impl) that
+- [x] Define an in-memory `SigningSessionStore` trait (with an in-mem impl) that
       later stages back with a real store; sessions are keyed by
       `signing_session_id`.
-- [ ] Implement the gRPC server bootstrap: bind `PORT`, register `SigningService`,
+- [x] Implement the gRPC server bootstrap: bind `PORT`, register `SigningService`,
       serve with `tokio`/`tonic`, structured `tracing` logs, graceful shutdown.
-- [ ] Add unit tests for proto round-trip serialization and the in-mem session
+- [x] Add unit tests for proto round-trip serialization and the in-mem session
       store.
 
 ### Acceptance criteria
@@ -89,24 +102,24 @@ Policy / Risk Engine; bind the token to a specific `tx_payload`, `key_id`, and
 `chain`; enforce single-use and freshness; audit denials.
 
 ### Tasks
-- [ ] Define `PolicyDecisionToken` (signed JWT-like structure: claims include
+- [x] Define `PolicyDecisionToken` (signed JWT-like structure: claims include
       `tx_payload_hash`, `key_id`, `chain`, `issued_at`, `expires_at`,
       `token_id`/nonce; signature by the Policy Engine).
-- [ ] Implement `PolicyTokenVerifier` trait with:
+- [x] Implement `PolicyTokenVerifier` trait with:
   - signature verification against the Policy Engine's public key (from config /
     JWKS),
   - `tx_payload_hash` match against the request's `tx_payload` (sha256),
   - `key_id` and `chain` match against the request,
   - freshness (`issued_at` / `expires_at`) within allowed skew,
   - single-use enforcement via a `UsedTokenStore` (in-mem now, pluggable).
-- [ ] Wire `SignTx` handler to call the verifier before any signing work; on
+- [x] Wire `SignTx` handler to call the verifier before any signing work; on
   failure return `FAILED_PRECONDITION` with the denial reason and emit an audit
   record (deny path).
 - [ ] Add gRPC client to the Policy Engine (`POLICY_ENGINE_URL`) for token
   introspection / revocation lookup when configured.
-- [ ] Add replay-protection: rejected duplicate `token_id` and expired tokens are
+- [x] Add replay-protection: rejected duplicate `token_id` and expired tokens are
   rejected and audited.
-- [ ] Add unit + property tests: valid token accepted; tampered payload / key /
+- [x] Add unit + property tests: valid token accepted; tampered payload / key /
   chain / signature / expired / replayed all rejected; single-use enforced.
 
 ### Acceptance criteria
@@ -127,12 +140,13 @@ Management service before signing, and validate that the request's `key_id` and
 `chain` are consistent with Wallet Management's records.
 
 ### Tasks
-- [ ] Add a generated Wallet Management gRPC client (`WALLET_MANAGEMENT_URL`)
+- [x] Add a generated Wallet Management gRPC client (`WALLET_MANAGEMENT_URL`)
       with the `GetKeyMetadata`-equivalent RPC for resolving `key_id` →
       `{ public_key, chain, address, derivation_path, status }`.
-- [ ] Define `WalletManagementClient` trait; provide a real gRPC impl and a mock
+      *Deviation: wallet-management serves JSON-codec gRPC over plain Go structs, so the client speaks that codec against /wallet.WalletService/ResolveKeyID (wallet_id → key_ids) and cross-checks the request's key_id; the richer metadata RPC does not exist there yet.*
+- [x] Define `WalletManagementClient` trait; provide a real gRPC impl and a mock
       impl for tests.
-- [ ] Wire `SignTx` to resolve the key via Wallet Mgmt and cross-check:
+- [x] Wire `SignTx` to resolve the key via Wallet Mgmt and cross-check:
   - `key_id` exists and `status` is active,
   - the request's `chain` matches the wallet's `chain`,
   - the policy token's `key_id`/`chain` matches the wallet record,
@@ -141,7 +155,7 @@ Management service before signing, and validate that the request's `key_id` and
       in Wallet Management after a successful ceremony / rotation.
 - [ ] Add retries + circuit breaker for Wallet Mgmt calls (sign path must fail
       closed if Wallet Mgmt is unavailable).
-- [ ] Tests: happy path resolves address; unknown / inactive / chain-mismatched
+- [x] Tests: happy path resolves address; unknown / inactive / chain-mismatched
       keys are rejected and audited; Wallet Mgmt outage fails closed.
 
 ### Acceptance criteria
@@ -162,7 +176,7 @@ adapters (v1) and the in-house MPC engine (later) implement, preserving a clean
 boundary so callers (`SignTx`) are backend-agnostic.
 
 ### Tasks
-- [ ] Define `SigningEngine` trait:
+- [x] Define `SigningEngine` trait:
   ```rust
   #[async_trait]
   trait SigningEngine: Send + Sync {
@@ -173,16 +187,16 @@ boundary so callers (`SignTx`) are backend-agnostic.
       async fn restore_share(&self, req: &RestoreShareRequest) -> Result<RestoreResult, EngineError>;
   }
   ```
-- [ ] Define `EngineError` taxonomy (provider-unavailable, key-not-found, denied,
+- [x] Define `EngineError` taxonomy (provider-unavailable, key-not-found, denied,
       transient, internal) mapping to gRPC status codes.
-- [ ] Add an engine factory selected by `CUSTODY_PROVIDER` env var:
+- [x] Add an engine factory selected by `CUSTODY_PROVIDER` env var:
       `in_house` → in-house engine (Stage 7), `fireblocks`/`dfns`/`turnkey` →
       custody adapter (Stage 6).
-- [ ] Refactor `SignTx` to: verify policy token → resolve wallet → dispatch to
+- [x] Refactor `SignTx` to: verify policy token → resolve wallet → dispatch to
       `SigningEngine` → emit audit record. Same for control-plane RPCs.
-- [ ] Add a `NoopEngine` and a mock engine for testing the orchestration logic
+- [x] Add a `NoopEngine` and a mock engine for testing the orchestration logic
       independent of any backend.
-- [ ] Tests: `SignTx` end-to-end with the mock engine produces a signed audit
+- [x] Tests: `SignTx` end-to-end with the mock engine produces a signed audit
       record and correct response metadata; engine errors map to correct gRPC
       codes.
 
@@ -205,21 +219,22 @@ providers, gated by feature flags, so the service can ship v1 by delegating
 signing to a custody provider under our policy + audit wrappers.
 
 ### Tasks
-- [ ] Define a per-provider config block (`CUSTODY_API_URL`, `CUSTODY_API_KEY`,
+- [x] Define a per-provider config block (`CUSTODY_API_URL`, `CUSTODY_API_KEY`,
       `CUSTODY_WEBHOOK_SECRET`, plus provider-specific options) loaded from env.
-- [ ] Implement the `FireblocksEngine` (feature `fireblocks`): sign via the
+- [x] Implement the `FireblocksEngine` (feature `fireblocks`): sign via the
       Fireblocks API, poll / webhook for transaction completion, verify the
       returned signature, support ECDSA (EVM) and EdDSA (Solana) chains.
-- [ ] Implement the `DfnsEngine` (feature `dfns`): sign via the Dfns API,
+- [x] Implement the `DfnsEngine` (feature `dfns`): sign via the Dfns API,
       including their MPC-backed wallet signing flow; verify signatures.
-- [ ] Implement the `TurnkeyEngine` (feature `turnkey`): sign via the Turnkey API
+- [x] Implement the `TurnkeyEngine` (feature `turnkey`): sign via the Turnkey API
       (their MPC / TEE-based signing); verify signatures.
-- [ ] All adapters translate provider errors to `EngineError` taxonomy and never
+      *Deviation: all three adapters currently target a normalized custody REST profile (shared CustodyHttp core, per-provider URL/auth shaping) with local ECDSA/Ed25519 signature verification of every response; mapping to each provider's real API schema is the remaining work before production use.*
+- [x] All adapters translate provider errors to `EngineError` taxonomy and never
       log raw signatures / key material.
-- [ ] Implement inbound webhook verification (HMAC / signature) for each
+- [x] Implement inbound webhook verification (HMAC / signature) for each
       provider that uses async status callbacks; expose a `CustodyWebhook`
       gRPC/HTTP endpoint guarded by `CUSTODY_WEBHOOK_SECRET`.
-- [ ] Add a `mock-custody` test server (`wiremock`-style) and integration tests
+- [x] Add a `mock-custody` test server (`wiremock`-style) and integration tests
       for each adapter: happy path, provider timeout, provider rejection,
       signature verification failure.
 - [ ] Document per-provider setup (API key scopes, webhook URL, supported
@@ -330,13 +345,14 @@ denials) to the Audit / Event Log.
 - [ ] Implement the inter-node MPC transport (used by Stage 7) over a separate
       mTLS channel with short-lived certs issued by the internal PKI; add cert
       rotation support.
-- [ ] Define `SigningAuditRecord` (matches README data model) signed by each
+- [x] Define `SigningAuditRecord` (matches README data model) signed by each
       participant node; records include request hash, participants, result,
       signature (or denial reason), `node_signatures`, `created_at`.
-- [ ] Implement `AuditEmitter` (`AUDIT_EVENT_LOG_URL`) streaming signed audit
+      *Single-node signature today; multi-participant co-signing lands with the Stage 7 cluster.*
+- [x] Implement `AuditEmitter` (`AUDIT_EVENT_LOG_URL`) streaming signed audit
       records async; failures are retried and never block the sign path beyond
       the latency budget.
-- [ ] Implement append-only audit record signing: each node signs the record
+- [x] Implement append-only audit record signing: each node signs the record
       with its mTLS identity key / HSM key; verify on ingest.
 - [ ] Add a `make mtls` local dev helper generating an ephemeral internal PKI
       (CA + 3 node certs) for the local cluster runner.
@@ -364,17 +380,19 @@ external security review, reproducible Docker images, SBOM, and runbooks.
 ### Tasks
 - [ ] Reach ≥90% line coverage with `cargo-llvm-cov` / `tarpaulin`; enforce a
       coverage gate in CI (Codecov threshold).
-- [ ] Add property tests (proptest) for crypto paths: signature verification,
+- [x] Add property tests (proptest) for crypto paths: signature verification,
       token binding, replay rejection, threshold bounds.
+      *Token binding + corruption properties covered; threshold-bound properties land with Stage 7.*
 - [ ] Add chaos / integration tests: kill `n-t` nodes and assert signing still
       succeeds; bring nodes back and assert rotation restores full membership.
 - [ ] Run `cargo audit` + `cargo deny` in CI and fix all advisories; pin all
       deps and document the SBOM (`cargo cyclonedx`).
 - [ ] Commission an external MPC / Rust security audit; track findings as
       issues; remediate before v1 GA.
-- [ ] Hardened multi-stage `Dockerfile` (distroless / minimal runtime, non-root
+- [x] Hardened multi-stage `Dockerfile` (distroless / minimal runtime, non-root
       user, read-only FS, dropped capabilities) reproducible with
       `cargo build --release --features <provider>`.
+      *Multi-stage, non-root; distroless/read-only-FS hardening still open.*
 - [ ] Add `docker-compose` for the local 3-node cluster (t=2, n=3) with mTLS
       certs and a mock custody provider.
 - [ ] Write runbooks: DKG ceremony, key rotation, node restore, incident

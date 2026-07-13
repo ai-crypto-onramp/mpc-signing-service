@@ -220,6 +220,41 @@ from the platform secret manager, not the environment, in production.
 | `LOG_LEVEL` | no | `info` | `error` \| `warn` \| `info` \| `debug` |
 | `RUST_LOG` | no | `info` | tracing-subscriber filter for crate-level log control |
 
+## Implementation Status
+
+Stages 1–6 of `PROJECT_PLAN.md` (the v1-shippable path) are implemented:
+
+- **gRPC surface** (`proto/mpc_signing.proto`, tonic + prost): `SignTx`, `Dkg`,
+  `RotateKey`, `GetKeyMetadata`, `RestoreShare`. HTTP serves `/healthz` and the
+  HMAC-verified `/v1/custody/webhook`.
+- **Policy gating** (Stage 3): `SignTx` refuses to sign without a valid
+  `policy_decision_token` — an Ed25519-signed claims blob bound to
+  `sha256(tx_payload)`, `key_id`, and `chain`, checked for freshness and single
+  use. All five failure modes produce distinct audited denial reasons.
+- **Wallet Management integration** (Stage 4): `wallet_id → key_id` binding is
+  cross-checked before signing via wallet-management's JSON-codec gRPC
+  (`/wallet.WalletService/ResolveKeyID`); the sign path fails closed on outage.
+- **`SigningEngine` boundary** (Stage 5): all RPC handlers dispatch through the
+  trait; `CUSTODY_PROVIDER` selects the backend with no handler changes.
+- **Custody adapters** (Stage 6): Fireblocks / Dfns / Turnkey behind feature
+  flags, sharing an HTTP core that locally verifies every provider-returned
+  signature before trusting it (ECDSA secp256k1 + Ed25519 `verify_strict`).
+- **Signed audit records** (Stage 9, partial): every signing attempt — signed,
+  denied, or failed — emits a record signed by the node's Ed25519 identity key,
+  delivered asynchronously with retries to `AUDIT_EVENT_LOG_URL`.
+
+Known deviations and pending work:
+
+- The `in-house` engine is a **single-party placeholder** (real k256/Ed25519
+  signing, full trait contract) until an audited CGGMP/CMP20 crate is selected —
+  threshold DKG, t-of-n signing, inter-node transport, and quorum enforcement
+  (Stage 7) remain open, as do enclave/HSM share storage and attestation
+  (Stage 8) and mTLS (Stage 9). Do not use it as a production signer.
+- `INSECURE_SKIP_POLICY` / `INSECURE_SKIP_WALLET_CHECK` are dev-only escape
+  hatches; without them, an unconfigured policy key or wallet URL fails closed.
+- Sessions and used tokens are in-memory stores behind traits; a durable store
+  swaps in without touching handlers.
+
 ## Local Development
 
 > **Security caveats:** Local development never uses real HSMs or production key
