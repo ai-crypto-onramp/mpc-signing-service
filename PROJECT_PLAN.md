@@ -420,7 +420,7 @@ external security review, reproducible Docker images, SBOM, and runbooks.
       requirements, disclosure contact) referencing the README.
 
 ### Acceptance criteria
-- CI coverage upload succeeds; Codecov badge green.
+- CI coverage upload succeeds.
 - `cargo audit` and `cargo deny` are clean; SBOM artifact is published with each
       release.
 - External audit findings are remediated; no Critical/High findings open at GA.
