@@ -258,7 +258,7 @@ Stages 7–10 (the in-house engine and hardening) are also implemented:
 - **mTLS** (Stage 9): `MTLS_CERT`/`MTLS_KEY`/`MTLS_CA` enable mutual TLS on the
   gRPC port; a rogue-CA client is rejected (tested). `make mtls` generates a
   local PKI; `docker-compose.cluster.yml` runs a 3-node mTLS cluster.
-- **Hardening** (Stage 10): ≥90% coverage with a CI gate, chaos test, and
+- **Hardening** (Stage 10): coverage reporting in CI, chaos test, and
   `cargo-deny`/`cargo-audit` in CI; runbooks in `docs/runbooks/` and
   `SECURITY.md`.
 

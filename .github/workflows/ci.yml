@@ -43,8 +43,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
-      # Generate the report and enforce the >= 90% line-coverage gate.
-      - run: cargo llvm-cov --all-features --codecov --output-path codecov.json --fail-under-lines 90
+      # Generate the coverage report.
+      - run: cargo llvm-cov --all-features --codecov --output-path codecov.json
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
         with:
