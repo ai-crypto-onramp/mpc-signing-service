@@ -45,8 +45,16 @@ pub struct Config {
     pub custody_api_key: Option<String>,
     /// Shared secret for verifying inbound custody webhooks (HMAC-SHA256).
     pub custody_webhook_secret: Option<String>,
-    /// Audit / Event Log ingestion URL.
+    /// Audit / Event Log ingestion URL. Deprecated: producers now publish
+    /// to Kafka topic `audit.v1` (see KAFKA_BROKERS). Retained only for
+    /// compatibility with tests; production wiring ignores it.
     pub audit_event_log_url: Option<String>,
+    /// Kafka brokers (comma-separated) for the audit.v1 producer.
+    pub kafka_brokers: Option<String>,
+    /// DEV_MODE=1 allows startup with no KAFKA_BROKERS and no policy
+    /// pubkey; audit records fall back to stderr logging instead of
+    /// being published.
+    pub dev_mode: bool,
     /// Stable identifier of this node in audit records.
     pub node_id: String,
     /// Hex-encoded Ed25519 seed for the node's audit-record signing key.
@@ -78,6 +86,8 @@ impl Config {
             custody_api_key: env_opt("CUSTODY_API_KEY"),
             custody_webhook_secret: env_opt("CUSTODY_WEBHOOK_SECRET"),
             audit_event_log_url: env_opt("AUDIT_EVENT_LOG_URL"),
+            kafka_brokers: env_opt("KAFKA_BROKERS"),
+            dev_mode: env_parse("DEV_MODE", false),
             node_id: env_opt("NODE_ID").unwrap_or_else(|| "node-0".to_string()),
             node_signing_key: env_opt("NODE_SIGNING_KEY"),
             insecure_skip_policy: env_parse("INSECURE_SKIP_POLICY", false),
@@ -102,6 +112,8 @@ impl Default for Config {
             custody_api_key: None,
             custody_webhook_secret: None,
             audit_event_log_url: None,
+            kafka_brokers: None,
+            dev_mode: false,
             node_id: "node-0".to_string(),
             node_signing_key: None,
             insecure_skip_policy: false,

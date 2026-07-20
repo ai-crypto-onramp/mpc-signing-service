@@ -7,7 +7,7 @@ use std::sync::Arc;
 use axum::{routing::get, routing::post, Json, Router};
 use serde_json::{json, Value};
 
-use mpc_signing_service::audit::{AuditEmitter, AuditSigner, HttpAuditSink};
+use mpc_signing_service::audit::{AuditEmitter, AuditSigner, KafkaAuditSink};
 use mpc_signing_service::config::Config;
 use mpc_signing_service::engine::build_engine;
 use mpc_signing_service::grpc::{serve, MpcService};
@@ -97,10 +97,27 @@ async fn main() -> anyhow::Result<()> {
         &cfg.node_id,
         cfg.node_signing_key.as_deref(),
     )?);
-    let audit_sink = cfg
-        .audit_event_log_url
-        .as_deref()
-        .map(|u| Arc::new(HttpAuditSink::new(u)) as Arc<dyn mpc_signing_service::audit::AuditSink>);
+    let audit_sink: Option<Arc<dyn mpc_signing_service::audit::AuditSink>> = match &cfg.kafka_brokers {
+        Some(brokers) => match KafkaAuditSink::new(brokers, &cfg.node_id) {
+            Ok(sink) => Some(Arc::new(sink) as Arc<dyn mpc_signing_service::audit::AuditSink>),
+            Err(e) => {
+                if cfg.dev_mode {
+                    tracing::warn!("KAFKA_BROKERS set but producer init failed (DEV_MODE): {e}; audit records will be logged");
+                    None
+                } else {
+                    return Err(anyhow::anyhow!("audit kafka producer init: {e}"));
+                }
+            }
+        },
+        None => {
+            if cfg.dev_mode {
+                tracing::warn!("KAFKA_BROKERS unset and DEV_MODE=1; audit records will be logged to stderr only");
+                None
+            } else {
+                return Err(anyhow::anyhow!("KAFKA_BROKERS unset and DEV_MODE not set; cannot start audit producer"));
+            }
+        }
+    };
     let audit = AuditEmitter::start(audit_sink);
 
     let service = MpcService {

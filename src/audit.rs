@@ -9,10 +9,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use ed25519_dalek::{Signer, SigningKey, Verifier, VerifyingKey};
+use rdkafka::producer::{FutureProducer, FutureRecord};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tokio::sync::mpsc;
 
 use crate::domain::{unix_now, Chain, KeyId, SigningSessionId};
+
+pub const AUDIT_TOPIC: &str = "audit.v1";
 
 /// Outcome of a signing attempt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -157,28 +161,61 @@ pub trait AuditSink: Send + Sync {
     async fn deliver(&self, record: &SigningAuditRecord) -> anyhow::Result<()>;
 }
 
-/// HTTP sink POSTing records to `AUDIT_EVENT_LOG_URL/v1/events`.
-pub struct HttpAuditSink {
-    url: String,
-    client: reqwest::Client,
+/// Kafka sink publishing the canonical audit.v1 envelope (see
+/// .github/contracts/asyncapi/audit/v1/asyncapi.yaml) to the `audit.v1` topic. The
+/// signed `SigningAuditRecord` is carried as the `payload` field; the
+/// envelope fields are derived from the record.
+pub struct KafkaAuditSink {
+    producer: FutureProducer,
+    source: String,
 }
 
-impl HttpAuditSink {
-    pub fn new(base_url: &str) -> Self {
-        Self {
-            url: format!("{}/v1/events", base_url.trim_end_matches('/')),
-            client: reqwest::Client::new(),
-        }
+impl KafkaAuditSink {
+    /// `brokers` is a comma-separated broker list, e.g. "kafka:9092".
+    pub fn new(brokers: &str, source: &str) -> anyhow::Result<Self> {
+        let producer: FutureProducer = rdkafka::ClientConfig::new()
+            .set("bootstrap.servers", brokers)
+            .set("message.timeout.ms", "5000")
+            .create()?;
+        Ok(Self {
+            producer,
+            source: source.to_string(),
+        })
     }
 }
 
 #[async_trait::async_trait]
-impl AuditSink for HttpAuditSink {
+impl AuditSink for KafkaAuditSink {
     async fn deliver(&self, record: &SigningAuditRecord) -> anyhow::Result<()> {
-        let resp = self.client.post(&self.url).json(record).send().await?;
-        if !resp.status().is_success() {
-            anyhow::bail!("audit sink returned {}", resp.status());
-        }
+        let payload = serde_json::to_value(record)?;
+        let payload_bytes = serde_json::to_vec(&payload)?;
+        let mut hasher = Sha256::new();
+        hasher.update(&payload_bytes);
+        let payload_hash = format!("sha256:{}", hex::encode(hasher.finalize()));
+        let id = uuid::Uuid::new_v4().to_string();
+        let ts = chrono::DateTime::<chrono::Utc>::from_timestamp(record.created_at as i64, 0)
+            .unwrap_or_else(|| chrono::Utc::now())
+            .to_rfc3339_opts(chrono::SecondsFormat::Nanos, true);
+        let envelope = serde_json::json!({
+            "schema_version": "1",
+            "id": id,
+            "ts": ts,
+            "source_service": self.source,
+            "actor_id": self.source,
+            "action": "mpc.sign",
+            "target_type": "transaction",
+            "target_id": record.signing_session_id.0.clone(),
+            "payload_hash": payload_hash,
+            "payload": payload,
+        });
+        let key = record.record_id.clone();
+        self.producer
+            .send(
+                FutureRecord::to(AUDIT_TOPIC).key(&key).payload(&serde_json::to_vec(&envelope)?),
+                Duration::from_secs(5),
+            )
+            .await
+            .map_err(|(e, _)| anyhow::anyhow!("kafka audit publish: {}", e))?;
         Ok(())
     }
 }

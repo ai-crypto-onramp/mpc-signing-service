@@ -48,6 +48,8 @@ base64 = "0.22"
 uuid = { version = "1", features = ["v4", "serde"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 async-trait = "0.1"
+rdkafka = { version = "0.36", features = ["tokio"] }
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 
 [dev-dependencies]
 tower = { version = "0.4", features = ["util"] }
