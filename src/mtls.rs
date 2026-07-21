@@ -10,7 +10,7 @@
 use tonic::transport::{Certificate, ClientTlsConfig, Identity, ServerTlsConfig};
 
 /// PEM-encoded mTLS material for this node.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct MtlsMaterial {
     cert_pem: Vec<u8>,
     key_pem: Vec<u8>,
@@ -28,16 +28,41 @@ impl MtlsMaterial {
         })
     }
 
-    /// Load from `MTLS_CERT` / `MTLS_KEY` / `MTLS_CA`. Returns `Ok(None)` when
-    /// none are set (plaintext dev), or an error if some but not all are set.
+    /// Load from `MTLS_CERT` / `MTLS_KEY` / `MTLS_CA` (or the equivalent
+    /// `TLS_CERT_FILE` / `TLS_KEY_FILE` / `TLS_CA_FILE` trio). Returns
+    /// `Ok(None)` when none are set, or an error if some but not all are set.
+    /// In `DEV_MODE!=1` with all three unset it fatals at startup.
     pub fn from_env() -> anyhow::Result<Option<Self>> {
-        let cert = std::env::var("MTLS_CERT").ok().filter(|v| !v.is_empty());
-        let key = std::env::var("MTLS_KEY").ok().filter(|v| !v.is_empty());
-        let ca = std::env::var("MTLS_CA").ok().filter(|v| !v.is_empty());
+        let cert = std::env::var("MTLS_CERT")
+            .ok()
+            .filter(|v| !v.is_empty())
+            .or_else(|| {
+                std::env::var("TLS_CERT_FILE")
+                    .ok()
+                    .filter(|v| !v.is_empty())
+            });
+        let key = std::env::var("MTLS_KEY")
+            .ok()
+            .filter(|v| !v.is_empty())
+            .or_else(|| std::env::var("TLS_KEY_FILE").ok().filter(|v| !v.is_empty()));
+        let ca = std::env::var("MTLS_CA")
+            .ok()
+            .filter(|v| !v.is_empty())
+            .or_else(|| std::env::var("TLS_CA_FILE").ok().filter(|v| !v.is_empty()));
         match (cert, key, ca) {
             (Some(c), Some(k), Some(a)) => Ok(Some(Self::from_paths(&c, &k, &a)?)),
-            (None, None, None) => Ok(None),
-            _ => anyhow::bail!("MTLS_CERT, MTLS_KEY, and MTLS_CA must all be set together"),
+            (None, None, None) => {
+                if std::env::var("DEV_MODE").as_deref() == Ok("1") {
+                    Ok(None)
+                } else {
+                    anyhow::bail!(
+                        "MTLS_CERT/MTLS_KEY/MTLS_CA (or TLS_CERT_FILE/TLS_KEY_FILE/TLS_CA_FILE) required when DEV_MODE!=1"
+                    )
+                }
+            }
+            _ => anyhow::bail!(
+                "MTLS_CERT, MTLS_KEY, and MTLS_CA must all be set together (or all unset)"
+            ),
         }
     }
 
@@ -78,7 +103,46 @@ mod tests {
         std::env::remove_var("MTLS_CERT");
         std::env::remove_var("MTLS_KEY");
         std::env::remove_var("MTLS_CA");
+        std::env::remove_var("TLS_CERT_FILE");
+        std::env::remove_var("TLS_KEY_FILE");
+        std::env::remove_var("TLS_CA_FILE");
+        std::env::set_var("DEV_MODE", "1");
         assert!(MtlsMaterial::from_env().unwrap().is_none());
+        std::env::remove_var("DEV_MODE");
+    }
+
+    #[test]
+    fn from_env_prod_missing_is_error() {
+        for k in [
+            "MTLS_CERT",
+            "MTLS_KEY",
+            "MTLS_CA",
+            "TLS_CERT_FILE",
+            "TLS_KEY_FILE",
+            "TLS_CA_FILE",
+            "DEV_MODE",
+        ] {
+            std::env::remove_var(k);
+        }
+        assert!(MtlsMaterial::from_env().is_err());
+    }
+
+    #[test]
+    fn from_env_tls_cert_file_trio_works() {
+        std::env::remove_var("MTLS_CERT");
+        std::env::remove_var("MTLS_KEY");
+        std::env::remove_var("MTLS_CA");
+        std::env::set_var("TLS_CERT_FILE", "/x/cert.pem");
+        std::env::set_var("TLS_KEY_FILE", "/x/key.pem");
+        std::env::set_var("TLS_CA_FILE", "/x/ca.pem");
+        // from_env reads the trio but from_paths will fail because the files
+        // don't exist; verify it tries to load by asserting an error mentioning
+        // read MTLS_CERT or the path.
+        let err = MtlsMaterial::from_env().unwrap_err().to_string();
+        assert!(err.contains("read MTLS_CERT") || err.contains("/x/cert.pem"));
+        std::env::remove_var("TLS_CERT_FILE");
+        std::env::remove_var("TLS_KEY_FILE");
+        std::env::remove_var("TLS_CA_FILE");
     }
 
     #[test]
