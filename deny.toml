@@ -6,6 +6,12 @@ ignore = [
     # rustls-pemfile is unmaintained but pulled transitively by tonic 0.12;
     # no fixed version is available yet. Revisit on the next tonic upgrade.
     "RUSTSEC-2025-0134",
+    # rsa v0.9 Marvin Attack (RUSTSEC-2023-0071) — dev-dep only, used by the
+    # fireblocks adapter tests to generate RSA-2048 keypairs for JWT signing.
+    # No safe upstream fix is available; the rsa crate is never in the
+    # production binary (dev-dependency). Revisit when a fixed rsa release
+    # lands or switch to a different test keygen crate.
+    "RUSTSEC-2023-0071",
 ]
 
 [bans]
