@@ -97,7 +97,9 @@ async fn main() -> anyhow::Result<()> {
         &cfg.node_id,
         cfg.node_signing_key.as_deref(),
     )?);
-    let audit_sink: Option<Arc<dyn mpc_signing_service::audit::AuditSink>> = match &cfg.kafka_brokers {
+    let audit_sink: Option<Arc<dyn mpc_signing_service::audit::AuditSink>> = match &cfg
+        .kafka_brokers
+    {
         Some(brokers) => match KafkaAuditSink::new(brokers, &cfg.node_id) {
             Ok(sink) => Some(Arc::new(sink) as Arc<dyn mpc_signing_service::audit::AuditSink>),
             Err(e) => {
@@ -114,7 +116,9 @@ async fn main() -> anyhow::Result<()> {
                 tracing::warn!("KAFKA_BROKERS unset and DEV_MODE=1; audit records will be logged to stderr only");
                 None
             } else {
-                return Err(anyhow::anyhow!("KAFKA_BROKERS unset and DEV_MODE not set; cannot start audit producer"));
+                return Err(anyhow::anyhow!(
+                    "KAFKA_BROKERS unset and DEV_MODE not set; cannot start audit producer"
+                ));
             }
         }
     };

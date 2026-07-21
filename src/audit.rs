@@ -211,7 +211,9 @@ impl AuditSink for KafkaAuditSink {
         let key = record.record_id.clone();
         self.producer
             .send(
-                FutureRecord::to(AUDIT_TOPIC).key(&key).payload(&serde_json::to_vec(&envelope)?),
+                FutureRecord::to(AUDIT_TOPIC)
+                    .key(&key)
+                    .payload(&serde_json::to_vec(&envelope)?),
                 Duration::from_secs(5),
             )
             .await
