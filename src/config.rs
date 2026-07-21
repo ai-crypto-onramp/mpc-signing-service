@@ -43,8 +43,30 @@ pub struct Config {
     pub custody_api_url: Option<String>,
     /// Custody provider API key.
     pub custody_api_key: Option<String>,
+    /// RSA-4096 PEM private key contents for Fireblocks JWT signing. Loaded
+    /// from `CUSTODY_API_SECRET_KEY` (inline PEM) or
+    /// `CUSTODY_API_SECRET_KEY_PATH` (file path). Ignored by non-Fireblocks
+    /// providers.
+    pub custody_api_secret_key: Option<String>,
+    /// When true, FireblocksEngine targets the Fireblocks sandbox
+    /// (`https://sandbox-api.fireblocks.io`) instead of the production API.
+    /// Set via `CUSTODY_SANDBOX=1`.
+    pub custody_sandbox: bool,
     /// Shared secret for verifying inbound custody webhooks (HMAC-SHA256).
     pub custody_webhook_secret: Option<String>,
+    /// Turnkey organization ID (required on every Turnkey request).
+    pub custody_organization_id: Option<String>,
+    /// Turnkey API key private key (secp256k1) hex used to stamp requests.
+    pub custody_api_private_key: Option<String>,
+    /// Optional Turnkey sub-organization ID (embedded-wallet per-end-user mode).
+    pub custody_sub_organization_id: Option<String>,
+    /// Dfns service account credential id (`cr-...`, base64url) used to pick
+    /// the signing key in the User Action Signing flow. Required for the
+    /// `dfns` provider.
+    pub custody_service_account_key: Option<String>,
+    /// Dfns service account Ed25519 private key, hex-encoded 32-byte seed,
+    /// used to sign User Action challenges. Required for the `dfns` provider.
+    pub custody_service_account_secret: Option<String>,
     /// Audit / Event Log ingestion URL. Deprecated: producers now publish
     /// to Kafka topic `audit.v1` (see KAFKA_BROKERS). Retained only for
     /// compatibility with tests; production wiring ignores it.
@@ -84,7 +106,15 @@ impl Config {
                 .unwrap_or(CustodyProvider::InHouse),
             custody_api_url: env_opt("CUSTODY_API_URL"),
             custody_api_key: env_opt("CUSTODY_API_KEY"),
+            custody_api_secret_key: env_opt("CUSTODY_API_SECRET_KEY")
+                .or_else(|| env_opt("CUSTODY_API_SECRET_KEY_PATH").and_then(load_secret_file)),
+            custody_sandbox: env_parse("CUSTODY_SANDBOX", false),
             custody_webhook_secret: env_opt("CUSTODY_WEBHOOK_SECRET"),
+            custody_organization_id: env_opt("CUSTODY_ORGANIZATION_ID"),
+            custody_api_private_key: env_opt("CUSTODY_API_PRIVATE_KEY"),
+            custody_sub_organization_id: env_opt("CUSTODY_SUB_ORGANIZATION_ID"),
+            custody_service_account_key: env_opt("CUSTODY_SERVICE_ACCOUNT_KEY"),
+            custody_service_account_secret: env_opt("CUSTODY_SERVICE_ACCOUNT_SECRET"),
             audit_event_log_url: env_opt("AUDIT_EVENT_LOG_URL"),
             kafka_brokers: env_opt("KAFKA_BROKERS"),
             dev_mode: env_parse("DEV_MODE", false),
@@ -110,7 +140,14 @@ impl Default for Config {
             custody_provider: CustodyProvider::InHouse,
             custody_api_url: None,
             custody_api_key: None,
+            custody_api_secret_key: None,
+            custody_sandbox: false,
             custody_webhook_secret: None,
+            custody_organization_id: None,
+            custody_api_private_key: None,
+            custody_sub_organization_id: None,
+            custody_service_account_key: None,
+            custody_service_account_secret: None,
             audit_event_log_url: None,
             kafka_brokers: None,
             dev_mode: false,
@@ -130,6 +167,15 @@ fn env_opt(key: &str) -> Option<String> {
 
 fn env_parse<T: std::str::FromStr>(key: &str, default: T) -> T {
     env_opt(key).and_then(|v| v.parse().ok()).unwrap_or(default)
+}
+
+/// Read the Fireblocks RSA private key from a file path pointed to by
+/// `CUSTODY_API_SECRET_KEY_PATH`. Returns `None` if the read fails —
+/// `FireblocksEngine::from_config` surfaces a clear error in that case.
+fn load_secret_file(path: String) -> Option<String> {
+    std::fs::read_to_string(&path)
+        .map_err(|e| tracing::warn!("CUSTODY_API_SECRET_KEY_PATH={path} unreadable: {e}"))
+        .ok()
 }
 
 #[cfg(test)]
