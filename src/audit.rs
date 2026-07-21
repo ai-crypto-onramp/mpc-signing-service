@@ -194,7 +194,7 @@ impl AuditSink for KafkaAuditSink {
         let payload_hash = format!("sha256:{}", hex::encode(hasher.finalize()));
         let id = uuid::Uuid::new_v4().to_string();
         let ts = chrono::DateTime::<chrono::Utc>::from_timestamp(record.created_at as i64, 0)
-            .unwrap_or_else(|| chrono::Utc::now())
+            .unwrap_or_else(chrono::Utc::now)
             .to_rfc3339_opts(chrono::SecondsFormat::Nanos, true);
         let envelope = serde_json::json!({
             "schema_version": "1",
