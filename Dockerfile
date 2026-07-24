@@ -5,20 +5,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends protobuf-compil
 
 # Cache cargo dependencies separately from source so a source change does
 # not re-fetch + recompile the entire dep tree (saves ~5-10 min per rebuild).
-COPY Cargo.toml Cargo.lock ./
+COPY Cargo.toml Cargo.lock build.rs ./
+COPY proto/ ./proto/
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/target \
-    mkdir src && echo "fn main() {}" > src/main.rs && echo "" > src/lib.rs \
-    && cargo build --release \
-    && rm -rf src target/release/mpc-signing-service*
+    mkdir src && echo "" > src/lib.rs \
+    && cargo build --release --lib \
+    && rm -rf src
 
 # Now copy the real source and rebuild — only the crate recompiles.
 COPY src/ ./src/
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/target \
-    cargo build --release && cp target/release/mpc-signing-service /mpc-signing-service
+    touch src/main.rs src/lib.rs && cargo build --release \
+    && cp target/release/mpc-signing-service /mpc-signing-service
 
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 RUN apt-get update && apt-get install -y --no-install-recommends wget ca-certificates && rm -rf /var/lib/apt/lists/* \
     && useradd --uid 10001 --no-create-home app
 USER app
