@@ -1,5 +1,17 @@
+# Rust build artifacts — target/ can be 18+ GB; never include in build context
 target/
-codecov.json
-.git/
-*.log
+
+# Env & secrets
 .env
+*.log
+codecov.json
+
+# Git & metadata
+.git/
+.gitignore
+.github/
+README.md
+docs/
+
+# OS noise
+.DS_Store
